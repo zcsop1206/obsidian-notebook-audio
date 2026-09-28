@@ -491,6 +491,124 @@ try:
         page.evaluate("() => pm.pause()")
         check('player: a missing segment file is marked and skipped', st['n'] == 2 and st['missing'] == 1 and st['seg'] == 1 and st['playing'] == [False, True] and st['pos'] > st['start2'], st)
 
+        # --- status (#4), desktop: the status bar item of the newest instance, through a hide and a return
+        REC = r'● \d+:\d{2} · \d+(\.\d)? (kB|MB) · \d+ segments?'
+
+        def status(pg, js_el):
+            return pg.evaluate("(sel) => { const e = eval(sel); const r = e.closest('.notebook-audio-pill') || e; return { text: e.textContent, state: r.dataset.state || '', visible: getComputedStyle(r).display !== 'none' && r.isConnected }; }", js_el)
+
+        def st():
+            return status(page, 'pc.ui.el')
+
+        item = page.evaluate("() => { const e = pc.ui.el; return { inBar: e.parentElement.id === 'statusbar', cls: e.className, pill: !!document.querySelector('.notebook-audio-pill') }; }")
+        st0 = st()
+        check('status: a status bar item on desktop, clickable, hidden while idle, no pill',
+              item['inBar'] and 'notebook-audio-status' in item['cls'] and 'mod-clickable' in item['cls'] and not item['pill']
+              and not st0['visible'] and st0['text'] == '', (item, st0))
+        toggle()
+        page.wait_for_timeout(2500)
+        stRec = st()
+        hide(page)
+        page.wait_for_timeout(300)
+        stPaused = st()
+        page.wait_for_timeout(2000)
+        show(page)
+        page.wait_for_timeout(1000)
+        stResumed = st()
+        page.wait_for_timeout(6000)
+        stLost = st()
+        page.locator('#statusbar').screenshot(path=os.path.join(OUT, 'shot_status_bar.png'))
+        page.evaluate("() => pc.ui.el.click()")
+        try:
+            page.wait_for_function("() => pc.recorder.state === 'idle' && !(window.pluginData && pluginData.active)", timeout=10000)
+        except Exception:
+            pass
+        stStopped = st()
+        print('  status bar:', [x['text'] for x in (stRec, stPaused, stResumed, stLost)])
+        check('status: recording shows elapsed, size and segments', stRec['visible'] and stRec['state'] == 'recording' and bool(re.fullmatch(REC, stRec['text'])), stRec)
+        check('status: hidden shows "Paused: Obsidian was in the background"',
+              stPaused['visible'] and stPaused['state'] == 'paused' and bool(re.fullmatch(r'Paused: Obsidian was in the background · \d+:\d{2}', stPaused['text'])), stPaused)
+        check('status: the return shows "Resumed, 0:0N lost"',
+              stResumed['state'] == 'resumed' and bool(re.fullmatch(r'Resumed, 0:0[1-4] lost while Obsidian was in the background · \d+ segments?', stResumed['text'])), stResumed)
+        check('status: then the running state with the total lost time',
+              stLost['state'] == 'recording' and bool(re.fullmatch(REC + r' · 0:0[1-4] lost', stLost['text'])) and '2 segments' in stLost['text'], stLost)
+        check('status: a click stops the recording and the item hides', not stStopped['visible'] and stStopped['text'] == '' and page.evaluate("() => pc.recorder.state") == 'idle', stStopped)
+
+        # A start that fails: the error for 5 s, then hidden.
+        page.evaluate("() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError')); }")
+        toggle()
+        page.wait_for_timeout(300)
+        stErr = st()
+        page.wait_for_timeout(5200)
+        stErrGone = st()
+        page.evaluate("() => { delete navigator.mediaDevices.getUserMedia; }")
+        check('status: a refused mic shows "Could not record: …" for 5 s, then hides',
+              stErr['visible'] and stErr['state'] == 'error' and stErr['text'] == 'Could not record: microphone refused: NotAllowedError'
+              and not stErrGone['visible'] and pointer() is None, (stErr, stErrGone))
+
+        # --- status (#4), mobile: the floating pill, in a page where Platform says iPad
+        mp = ctx.new_page()
+        mp.set_viewport_size({'width': 1180, 'height': 820})
+        mp.on('pageerror', lambda e: errors.append('mobile: ' + str(e)))
+        mp.on('console', lambda m: m.type == 'error' and errors.append('mobile: ' + m.text))
+        mp.goto(f'http://localhost:{port}/test/harness.html')
+        mp.evaluate("""async () => {
+          Object.assign(obsidian.Platform, { isMobile: true, isMobileApp: true, isIosApp: true, isTablet: true, isDesktop: false, isDesktopApp: false, isLinux: false });
+          dirs.add('Notes'); await app.vault.create('Notes/iPad.md', '# Lecture on the iPad\\n\\nFirst line of notes.\\nSecond line.\\n');
+          await app.vault.create('Notes/Other.md', 'Another note\\n');
+          await app.workspace.getLeaf().openFile(app.vault.getFileByPath('Notes/iPad.md'));
+          window.p = await loadPlugin(); }""")
+
+        def pill():
+            return status(mp, 'p.ui.el')
+
+        m0 = mp.evaluate("""() => { const all = document.querySelectorAll('.notebook-audio-pill'); const e = all[0];
+          return { n: all.length, inBody: !!e && e.parentElement === document.body, textEl: !!e && p.ui.el.parentElement === e,
+                   bar: document.querySelectorAll('#statusbar .notebook-audio-status').length }; }""")
+        pi0 = pill()
+        check('pill: one pill on mobile, on the body, no status bar item, hidden while idle',
+              m0 == {'n': 1, 'inBody': True, 'textEl': True, 'bar': 0} and not pi0['visible'], (m0, pi0))
+        mp.evaluate("async () => { await commands['toggle-recording'].callback(); }")
+        mp.wait_for_timeout(2500)
+        piRec = pill()
+        box = mp.evaluate("""() => { const e = document.querySelector('.notebook-audio-pill'), r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+          return { cx: (r.left + r.right) / 2, w: innerWidth, bottom: innerHeight - r.bottom, h: r.height, pos: cs.position, pe: cs.pointerEvents, z: Number(cs.zIndex),
+                   stop: getComputedStyle(e.querySelector('.notebook-audio-pill-stop')).display !== 'none' && e.querySelector('.notebook-audio-pill-stop').textContent }; }""")
+        mp.screenshot(path=os.path.join(OUT, 'shot_pill_recording.png'), full_page=True)
+        mp.evaluate("async () => { await app.workspace.getLeaf().openFile(app.vault.getFileByPath('Notes/Other.md')); }")
+        piSwitched = pill()
+        print('  pill box:', box)
+        check('pill: visible while recording, with the running text and a Stop label',
+              piRec['visible'] and piRec['state'] == 'recording' and bool(re.fullmatch(REC[2:], piRec['text'])) and box['stop'] == 'Stop', (piRec, box))
+        check('pill: fixed at the bottom centre above the toolbar, touch-sized, takes taps',
+              box['pos'] == 'fixed' and abs(box['cx'] - box['w'] / 2) < 2 and 55 <= box['bottom'] <= 70 and box['h'] >= 44 and box['pe'] == 'auto' and box['z'] > 0, box)
+        check('pill: stays while the user switches notes', piSwitched['visible'] and piSwitched['state'] == 'recording', piSwitched)
+        hide(mp)
+        mp.wait_for_timeout(300)
+        piPaused = pill()
+        mp.screenshot(path=os.path.join(OUT, 'shot_pill_paused.png'), full_page=True)
+        mp.evaluate("() => document.body.classList.add('theme-dark')")
+        mp.screenshot(path=os.path.join(OUT, 'shot_pill_paused_dark.png'), full_page=True)
+        mp.evaluate("() => document.body.classList.remove('theme-dark')")
+        mp.wait_for_timeout(1500)
+        show(mp)
+        mp.wait_for_timeout(1000)
+        piResumed = pill()
+        check('pill: paused while hidden', piPaused['visible'] and piPaused['state'] == 'paused' and bool(re.fullmatch(r'Paused: Obsidian was in the background · \d+:\d{2}', piPaused['text'])), piPaused)
+        check('pill: resumed on return', piResumed['state'] == 'resumed' and bool(re.fullmatch(r'Resumed, 0:0[1-4] lost while Obsidian was in the background · \d+ segments?', piResumed['text'])), piResumed)
+        mp.click('.notebook-audio-pill')
+        try:
+            mp.wait_for_function("() => p.recorder.state === 'idle' && !(window.pluginData && pluginData.active)", timeout=10000)
+        except Exception:
+            pass
+        piStopped = pill()
+        mdirs = mp.evaluate("() => [...dirs].filter(d => /^Notes\\/iPad\\/audio\\/[^/]+$/.test(d))")
+        mmeta = json.loads(mp.evaluate("(d) => fs.get(d + '/meta.json') || '{}'", mdirs[0])) if len(mdirs) == 1 else {}
+        check('pill: a tap stops the recording and the pill hides',
+              mp.evaluate("() => p.recorder.state") == 'idle' and not piStopped['visible'] and mmeta.get('ended') == 'clean'
+              and mmeta.get('device', {}).get('platform') == 'ios' and len(mmeta.get('segments', [])) == 2, (piStopped, mdirs, mmeta.get('ended')))
+        mp.close()
+
         print('notices:', page.evaluate("() => notices"))
         print('page errors:', errors)
         check('no page errors', not errors, errors)

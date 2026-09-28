@@ -14,11 +14,13 @@ import { registerPlayer, type PlayerApi } from './player';
 import { audioFolderForNote, dirname, joinPath, notelessCandidates, recordingFolderCandidates } from './paths';
 import { Recorder, type RecorderSnapshot, recoverRecording } from './recorder';
 import { type ActiveRecording, NotebookAudioSettingTab, parsePluginData, type PluginData, type Settings } from './settings';
+import { StatusUi } from './status';
 import { LOG_PREFIX, ensureDir } from './util';
 
 /** The status UI (issue #4): told about every recorder change, including the 1 s tick. */
 export interface RecorderUi {
   update(s: RecorderSnapshot): void;
+  destroy(): void;
 }
 
 export default class NotebookAudioPlugin extends Plugin {
@@ -43,6 +45,8 @@ export default class NotebookAudioPlugin extends Plugin {
     this.settings = data.settings;
     this.active = data.active;
     this.recorder = new Recorder(this.app.vault.adapter, s => this.onRecorderChange(s));
+    this.ui = new StatusUi(this);
+    this.ui.update(this.recorder.snapshot());
     this.addRibbonIcon('mic', 'Start or stop recording', () => { void this.toggleRecording(); });
     this.addCommand({ id: 'toggle-recording', name: 'Start or stop recording', callback: () => this.toggleRecording() });
     this.addSettingTab(new NotebookAudioSettingTab(this.app, this));
@@ -61,6 +65,8 @@ export default class NotebookAudioPlugin extends Plugin {
 
   onunload() {
     this.unloaded = true;
+    this.ui?.destroy();
+    this.ui = undefined;
     // Best effort: stop and write the links. A start in progress stops itself once it sees `unloaded`.
     if (!this.busy && this.recorder && this.recorder.state !== 'idle') {
       this.busy = true;
