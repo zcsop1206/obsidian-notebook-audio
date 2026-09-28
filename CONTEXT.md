@@ -55,7 +55,10 @@ checked by the owner after a release.
   recording after the screen timeout.
 - Chromium test harness findings: a simulated hide, killed mic and return produced two decodable
   segments; with `appendBinary` removed, a simulated crash left parts that recovery merged into a
-  decodable file.
+  decodable file. Headless Chromium 141 supports `audio/mp4`, reports finite durations for the
+  live-appended MP4 blobs, and its fake mic keeps recording while "hidden" until the track is
+  killed, so decoded segment lengths in tests run past `audioEndMs` (on the iPad audio stops at
+  the hide). The wake lock is refused in headless Chromium.
 
 ## Design (M1)
 
@@ -78,12 +81,20 @@ Notes/Physics/Lecture 3/audio/2026-09-27 14-03/
 - Ink notes (`ink: 1` frontmatter, the ink plugin's index files, whose pages live in
   `<note basename>/`) are ordinary markdown files: the audio folder sits beside the pages and the
   links are appended after the page embeds.
-- No active note: the clip goes to `<settings.folder>/<stamp>/` (default `audio/`), and a note
-  `<settings.folder>/Recording <stamp>.md` is created with the links and opened.
-- Recovery pointer: `saveData` holds `active: { dir, notePath, started }` while a recording runs,
-  cleared on a clean stop. On layout ready, a pointer left behind means the recording was
-  interrupted: parts are merged, `meta.json` completed (`ended: "recovered"`), the links appended
-  to the note, and a notice offers to open the note.
+- Two recordings in the same second (a start right after a stop) get `-2`, `-3` after the
+  seconds form.
+- No active note: the clip goes to `<settings.folder>/<stamp>/` (default `audio/`; an empty
+  setting means `audio/`, never the vault root), and a note `<settings.folder>/Recording
+  <stamp>.md` starting with `# Recording YYYY-MM-DD HH:mm` is created and opened once the mic
+  works (a refused mic leaves no note). Its links are appended on stop.
+- Recovery pointer: the plugin data is `{ settings, active? }`; `active: { dir, notePath,
+  started, device }` is saved before the recorder starts and cleared on a clean stop. `device` is
+  a per-install id kept in `localStorage`, so a pointer that reached another device through a
+  synced `data.json` is left alone there (#12). On layout ready, a pointer left behind with this
+  device's id means the recording was interrupted: parts are merged, `meta.json` completed
+  (`ended: "recovered"`), the links appended to the note, and a notice offers to open the note.
+  A note renamed while recording is followed (the pointer and `meta.note` are updated); a note
+  deleted while recording is created again with the links on stop.
 
 ### `meta.json`
 
@@ -123,9 +134,11 @@ Notes/Physics/Lecture 3/audio/2026-09-27 14-03/
 
 ### Note links
 
-On stop (or recovery), the plugin writes to the note that was active when recording started: at
-the cursor if that note is open in a markdown editor, else appended at the end. Standard markdown,
-paths relative to the note's folder and URL-encoded:
+On stop, the plugin writes to the note that was active when recording started: at the cursor if
+that note is open in the active markdown editor in source mode (a line break first when the
+cursor is mid-line), else appended at the end. Recovery and note-less notes always append (the
+cursor is meaningless there). Standard markdown, paths relative to the note's folder and
+URL-encoded:
 
 ```
 
@@ -139,7 +152,9 @@ plugin. One line per segment; no wikilinks, ever.
 
 ### Recorder behaviour (ported from the spike, keep the tests)
 
-`src/recorder.ts`, class `Recorder`: `start(dir, options)`, `stop()`, `snapshot()` for the UI.
+`src/recorder.ts`, class `Recorder(adapter, onChange)`: `start(options)`, `stop()` (resolves once
+every write landed, returns the final meta), `snapshot()` for the UI, and `recoverRecording(adapter,
+dir)`.
 2 s timeslice; `pickFormat()` prefers `audio/mp4`, then webm/opus, webm, ogg (the "preferred
 format" setting can force one). Chunks go through a serial write queue: `writeBinary` for the
 first chunk, then `appendBinary`; without it, parts under `parts-NN/` merged on stop. Visibility
@@ -155,12 +170,18 @@ being lost), `resumed` (back, with how long was lost), `stopping`.
   visible while the user switches notes). Both show state, elapsed time, size and segment count,
   and the pause state, "paused: Obsidian was in the background"; on return, "resumed, 0:31 lost"
   for a few seconds, then the running state with the total lost time. A tap on the pill stops.
-- Player (this is `obsidian-notebook#1`): an `ItemView` with one `<audio>` per segment, played in
-  order as one timeline, a bar that shows segments and the gaps between them, the wall-clock time
-  of the current position from `meta.json`, and click-to-seek including across gaps. Opened by the
-  command "Open a recording of this note" (lists the note's recordings) and by a button that a
-  markdown post-processor adds after a recording's embeds in reading view. Files are never merged:
-  they are independent MP4s and the gap must stay visible.
+- Player (this is `obsidian-notebook#1`, `src/player.ts`): an `ItemView` (state `{ dir }`) with
+  one `<audio>` per segment, played in order as one timeline, a bar that draws segments to scale
+  and the gaps between them (hatched; the tooltip says why from the next segment's `reason`),
+  "0:31 lost here" when playback or a seek crosses a gap, the wall-clock time of the current
+  position from `meta.json`, click/tap/drag-to-seek including across gaps, previous/next segment,
+  Space to toggle. Segment lengths come from the loaded media durations, `audioEndMs` as the
+  fallback. Opened by the command "Open a recording of this note" (a suggest modal of the folders
+  under the note's `audio/` that hold a `meta.json`, newest first, named from the folder stamp;
+  from inside a player, "this note" is the recording's note) and by a "Play as one timeline"
+  button that a markdown post-processor adds after each run of consecutive segment embeds from
+  one folder, in reading view only. Files are never merged: they are independent MP4s and the
+  gap must stay visible.
 - Settings: bitrate (96 kbps default), folder for note-less recordings (`audio/`), keep a log
   (off), preferred format (auto). The tab repeats the privacy note.
 
@@ -168,6 +189,18 @@ being lost), `resumed` (back, with how long was lost), `stopping`.
 
 Background recording, transcription, syncing audio to ink strokes (owner: not wanted), noise
 processing, merging segment files.
+
+### Source map
+
+- `src/main.ts`: plugin wiring: ribbon, commands, folders, note links, recovery, the `ui` hook.
+- `src/recorder.ts`: the recorder and `recoverRecording`.
+- `src/status.ts`, `src/status-text.ts`: status bar item / mobile pill and its text.
+- `src/player.ts`: the timeline player, its command and the reading-view button.
+- `src/settings.ts`: settings, plugin data, the settings tab.
+- `src/paths.ts`, `src/meta.ts`, `src/links.ts`, `src/media.ts`, `src/util.ts`: pure helpers
+  (folders and link targets, the timeline, the note lines, media durations, formatting).
+- `test/`: `mock-obsidian.js` + `harness.html` (the mock Obsidian), `run_recorder_test.py`
+  (Playwright), `unit/*.test.ts` (node --test, bundled by `build.mjs`).
 
 ## Acceptance (owner, iPad)
 
@@ -189,6 +222,10 @@ processing, merging segment files.
   dispatching `visibilitychange`, a killed mic by stopping the track, a stall by dropping
   `ondataavailable`, and a crash by dropping the plugin instance mid-recording and reloading.
   Audio checks decode the written bytes with `OfflineAudioContext.decodeAudioData`.
+  `NB_TEST_PORT_BASE` picks the port (default 8765) so parallel checkouts can run the suite at
+  once; when Playwright's own Chromium is missing, the runner uses `NB_CHROMIUM` or
+  `/opt/pw-browsers/chromium` (the browser pre-installed in cloud sessions). The suite runs
+  about four minutes: it records in real time.
 - Release: `.github/workflows/release.yml` on a tag push, or `workflow_dispatch` on `main` (it
   creates the tag itself; the cloud session's git proxy refuses tag pushes). BRAT installs from the
   release's `main.js`, `manifest.json`, `styles.css`. Bump `manifest.json`, `versions.json` and
