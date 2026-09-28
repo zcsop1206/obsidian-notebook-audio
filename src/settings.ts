@@ -26,6 +26,9 @@ export interface ActiveRecording {
   notePath: string;
   /** ISO UTC. */
   started: string;
+  /** deviceId() of the device that is recording. data.json can sync to another device (issue
+   *  #12), which must leave the pointer alone. '' for a pointer written before this field. */
+  device: string;
 }
 
 /** What saveData stores. */
@@ -60,9 +63,30 @@ export function parsePluginData(raw: unknown): PluginData {
   const a = o.active as Partial<ActiveRecording> | undefined;
   const data: PluginData = { settings };
   if (a && typeof a === 'object' && typeof a.dir === 'string' && a.dir && typeof a.notePath === 'string' && a.notePath) {
-    data.active = { dir: a.dir, notePath: a.notePath, started: typeof a.started === 'string' ? a.started : '' };
+    data.active = {
+      dir: a.dir, notePath: a.notePath, started: typeof a.started === 'string' ? a.started : '',
+      device: typeof a.device === 'string' ? a.device : '',
+    };
   }
   return data;
+}
+
+const DEVICE_KEY = 'notebook-audio-device';
+let device: string | undefined;
+
+/** This device's id: random, made on first use and kept in localStorage (per device, not synced
+ *  with the vault). If localStorage is unavailable, an id for this session only. */
+export function deviceId(): string {
+  if (device) return device;
+  let id: string | null = null;
+  try { id = window.localStorage.getItem(DEVICE_KEY); } catch (e) { /* no storage */ }
+  if (!id) {
+    id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    try { window.localStorage.setItem(DEVICE_KEY, id); } catch (e) { /* kept in memory */ }
+  }
+  return (device = id);
 }
 
 /** The part of the plugin the tab needs. */

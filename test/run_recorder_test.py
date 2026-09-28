@@ -508,6 +508,7 @@ try:
         toggle()
         page.wait_for_timeout(2500)
         stRec = st()
+        ptrRec = pointer()
         hide(page)
         page.wait_for_timeout(300)
         stPaused = st()
@@ -608,6 +609,55 @@ try:
               mp.evaluate("() => p.recorder.state") == 'idle' and not piStopped['visible'] and mmeta.get('ended') == 'clean'
               and mmeta.get('device', {}).get('platform') == 'ios' and len(mmeta.get('segments', [])) == 2, (piStopped, mdirs, mmeta.get('ended')))
         mp.close()
+
+        # --- recovery pointer from another device (#12): a data.json synced mid-recording
+        dev = page.evaluate("() => localStorage.getItem('notebook-audio-device')")
+        check('device: an id in localStorage, stored in the pointer by a start',
+              bool(dev) and bool(ptrRec) and ptrRec.get('device') == dev, (dev, ptrRec))
+
+        def interrupted_copy(dst):
+            # d5's files (a recovered recording) with `ended` removed from meta.json: an interrupted recording.
+            page.evaluate("""([src, dst]) => { dirs.add(dst);
+              for (const [k, v] of [...fs.entries()]) if (k.startsWith(src + '/')) fs.set(dst + k.slice(src.length), v instanceof Uint8Array ? v.slice() : v);
+              const m = JSON.parse(fs.get(dst + '/meta.json')); delete m.ended; fs.set(dst + '/meta.json', JSON.stringify(m, null, 1)); }""", [d5, dst])
+
+        def relaunch(active):
+            page.evaluate("""async (a) => { window.pluginData = { settings: { ...pluginData.settings }, active: a };
+              window.pc = await loadPlugin(); }""", active)
+
+        def recovered_text(before):
+            try:
+                page.wait_for_function("() => !(window.pluginData && pluginData.active)", timeout=15000)
+            except Exception:
+                pass
+            page.wait_for_timeout(300)
+            return note_text(LECTURE)[len(before):]
+
+        dF = LDIR + '/other-device'
+        interrupted_copy(dF)
+        foreign = {'dir': dF, 'notePath': LECTURE, 'started': '2026-09-28T10:00:00.000Z', 'device': 'other-device'}
+        text12 = note_text(LECTURE)
+        notices12 = page.evaluate("() => notices.length")
+        relaunch(foreign)
+        page.wait_for_timeout(2000)
+        metaF = read_meta(dF)
+        check('device: a pointer from another device is left alone on launch',
+              'ended' not in metaF and pointer() == foreign and note_text(LECTURE) == text12
+              and not any('Recovered' in n for n in page.evaluate("(i) => notices.slice(i)", notices12)), (metaF.get('ended'), pointer()))
+
+        relaunch({**foreign, 'device': dev})
+        addedF = recovered_text(text12)
+        check("device: the same pointer with this device's id is recovered",
+              read_meta(dF).get('ended') == 'recovered' and pointer() is None
+              and bool(re.fullmatch(r'\nRecording \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(\d+:\d{2}\)\n' + EMBED + r'Lecture%203/audio/other-device/segment-01\.m4a\)\n', addedF)), (read_meta(dF).get('ended'), pointer(), addedF))
+
+        dL = LDIR + '/legacy-pointer'
+        interrupted_copy(dL)
+        text12b = note_text(LECTURE)
+        relaunch({'dir': dL, 'notePath': LECTURE, 'started': '2026-09-28T10:00:00.000Z'})
+        addedL = recovered_text(text12b)
+        check('device: a pointer written before the device field is recovered',
+              read_meta(dL).get('ended') == 'recovered' and pointer() is None and 'legacy-pointer/segment-01.m4a' in addedL, (read_meta(dL).get('ended'), pointer(), addedL))
 
         print('notices:', page.evaluate("() => notices"))
         print('page errors:', errors)
