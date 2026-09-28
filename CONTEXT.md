@@ -166,10 +166,12 @@ being lost), `resumed` (back, with how long was lost), `stopping`.
 ### UI
 
 - Ribbon icon and command "Start or stop recording". No pause: a pause is a stop.
-- Desktop: a status bar item. Mobile: a small floating pill fixed over the workspace (it must stay
-  visible while the user switches notes). Both show state, elapsed time, size and segment count,
-  and the pause state, "paused: Obsidian was in the background"; on return, "resumed, 0:31 lost"
-  for a few seconds, then the running state with the total lost time. A tap on the pill stops.
+- Desktop: a status bar item. Mobile: a small floating pill fixed above the mobile toolbar (it
+  stays while the user switches notes), chosen once from `Platform.isMobile` (`src/status.ts`,
+  text in `src/status-text.ts`). Both show state, elapsed time, size and segment count, and the
+  pause state, "Paused: Obsidian was in the background"; on return, "Resumed, 0:31 lost while
+  Obsidian was in the background" for 5 s, then the running state with the total lost time; a
+  failed start shows its error for 5 s. A click or tap stops (only while recording; never starts).
 - Player (this is `obsidian-notebook#1`, `src/player.ts`): an `ItemView` (state `{ dir }`) with
   one `<audio>` per segment, played in order as one timeline, a bar that draws segments to scale
   and the gaps between them (hatched; the tooltip says why from the next segment's `reason`),
@@ -184,6 +186,18 @@ being lost), `resumed` (back, with how long was lost), `stopping`.
   gap must stay visible.
 - Settings: bitrate (96 kbps default), folder for note-less recordings (`audio/`), keep a log
   (off), preferred format (auto). The tab repeats the privacy note.
+
+### Known gaps
+
+- One recovery pointer slot: if device A crashes, its `data.json` syncs to B, and B then starts a
+  recording, B's pointer overwrites A's and A never recovers that recording. One pointer per
+  device would fix it; not done.
+- If iOS ever cleared Obsidian's `localStorage`, the device would get a new id and its own old
+  pointer would look foreign (not recovered, not cleared). Unknown whether that happens.
+- A note whose parent folder is renamed while recording (or whose `<basename>/` folder the ink
+  plugin moves) is not followed; the recorder keeps writing to the old path.
+- The "mic muted for 3 s while visible" reopen path is ported from the spike but has no
+  Playwright check.
 
 ### Out of scope
 
@@ -228,8 +242,8 @@ processing, merging segment files.
   about four minutes: it records in real time.
 - Release: `.github/workflows/release.yml` on a tag push, or `workflow_dispatch` on `main` (it
   creates the tag itself; the cloud session's git proxy refuses tag pushes). BRAT installs from the
-  release's `main.js`, `manifest.json`, `styles.css`. Bump `manifest.json`, `versions.json` and
-  `package.json` together.
+  release's `main.js`, `manifest.json`, `styles.css`. Bump `manifest.json` and `versions.json`
+  together (`package.json` carries no version).
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`; PR bodies end with
   `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - Ask the owner before: new dependencies, anything touching the ink repo, anything that writes
