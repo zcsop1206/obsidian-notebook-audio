@@ -1,0 +1,9 @@
+{
+  "id": "notebook-audio",
+  "name": "Notebook Audio",
+  "version": "0.1.0",
+  "minAppVersion": "1.7.2",
+  "description": "Record audio next to a note, on the iPad and on desktop. Foreground-only; shows where audio was lost while Obsidian was in the background and plays a recording back as one timeline.",
+  "author": "Adit Bhargava",
+  "isDesktopOnly": false
+}

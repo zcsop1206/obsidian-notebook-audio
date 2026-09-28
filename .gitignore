@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+test/out/
+__pycache__/
+
+# Built by npm run build
+main.js
