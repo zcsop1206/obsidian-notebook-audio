@@ -13,7 +13,7 @@ import { mediaDurationMs } from './media';
 import { registerPlayer, type PlayerApi } from './player';
 import { audioFolderForNote, dirname, joinPath, notelessCandidates, recordingFolderCandidates } from './paths';
 import { Recorder, type RecorderSnapshot, recoverRecording } from './recorder';
-import { type ActiveRecording, NotebookAudioSettingTab, parsePluginData, type PluginData, type Settings } from './settings';
+import { type ActiveRecording, deviceId, NotebookAudioSettingTab, parsePluginData, type PluginData, type Settings } from './settings';
 import { StatusUi } from './status';
 import { LOG_PREFIX, ensureDir } from './util';
 
@@ -141,7 +141,7 @@ export default class NotebookAudioPlugin extends Plugin {
     }
 
     // The pointer goes first: a crash from here on leaves something recovery can find.
-    await this.setActive({ dir, notePath, started: now.toISOString() });
+    await this.setActive({ dir, notePath, started: now.toISOString(), device: deviceId() });
     const ok = await this.recorder.start({
       dir, bitrate: s.bitrate, format: s.format, log: s.log, note: notePath, version: this.manifest.version,
       platform: Platform.isIosApp ? 'ios' : Platform.isAndroidApp ? 'android' : 'desktop',
@@ -239,6 +239,12 @@ export default class NotebookAudioPlugin extends Plugin {
   async recoverInterrupted() {
     const active = this.active;
     if (!active || this.busy || this.recorder.state !== 'idle') return;
+    // A pointer from another device (data.json synced mid-recording) is that device's to recover:
+    // left as it is. One without a device predates the field and is taken as this device's.
+    if (active.device && active.device !== deviceId()) {
+      console.log(LOG_PREFIX, `recovery: ${active.dir} was being recorded on another device; leaving its pointer alone`);
+      return;
+    }
     // Never touch the folder of a recording in progress (this instance's; the check above covers it).
     if (this.recorder.snapshot().dir === active.dir) return;
     this.busy = true;
