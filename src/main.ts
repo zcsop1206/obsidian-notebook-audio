@@ -10,6 +10,7 @@ import { MarkdownView, Notice, Platform, Plugin, TFile } from 'obsidian';
 import { buildTimeline, type Meta, recordingName, summaryText, type Timeline } from './meta';
 import { recordingLines } from './links';
 import { mediaDurationMs } from './media';
+import { registerPlayer, type PlayerApi } from './player';
 import { audioFolderForNote, dirname, joinPath, notelessCandidates, recordingFolderCandidates } from './paths';
 import { Recorder, type RecorderSnapshot, recoverRecording } from './recorder';
 import { type ActiveRecording, NotebookAudioSettingTab, parsePluginData, type PluginData, type Settings } from './settings';
@@ -22,6 +23,8 @@ export interface RecorderUi {
 
 export default class NotebookAudioPlugin extends Plugin {
   recorder!: Recorder;
+  /** The timeline player (issue #5): its view, command and reading-view button. */
+  player!: PlayerApi;
   /** Exposed for the tests; onload calls it through recoverInterrupted() for a pointer left behind. */
   recoverRecording = recoverRecording;
   settings: Settings = parsePluginData(null).settings;
@@ -52,6 +55,7 @@ export default class NotebookAudioPlugin extends Plugin {
       void this.save();
     }));
     this.app.workspace.onLayoutReady(() => { void this.recoverInterrupted(); });
+    this.player = registerPlayer(this);
     console.log(LOG_PREFIX, 'loaded');
   }
 
