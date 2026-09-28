@@ -358,6 +358,138 @@ try:
         page.evaluate("() => { const s = pc.settingTabs[0].containerEl.querySelector('select'); s.value = '96000'; s.dispatchEvent(new Event('change')); }")
         check('wiring 6: a bitrate change is saved and used by the next recording',
               stored6 == 64000 and meta6.get('bitrate') == 64000 and page.evaluate("() => pluginData.settings.bitrate") == 96000, (stored6, meta6.get('bitrate')))
+        # --- player (#5): a recording with a gap, played as one timeline. Recorded by pc, the
+        # newest plugin instance (the earlier ones had their recorders killed mid-recording above).
+        page.evaluate("() => { if (!adapter.appendBinary && window.savedAppendBinary) adapter.appendBinary = window.savedAppendBinary; document.removeEventListener('visibilitychange', p.recorder.onVisibility); }")
+        dirP = 'Notes/Lecture 3/audio/2026-09-27 14-03'
+        okP = page.evaluate("""async (d) => pc.recorder.start({ dir: d, bitrate: 96000, format: 'auto', log: false, note: 'Notes/Lecture 3.md', version: 'test', platform: 'desktop' })""", dirP)
+        page.wait_for_timeout(4000)
+        hide(page)
+        page.wait_for_timeout(1000)
+        page.evaluate("() => pc.recorder.track().stop()")
+        page.wait_for_timeout(1500)
+        show(page)
+        page.wait_for_timeout(4000)
+        page.evaluate("async () => { await pc.recorder.stop(); }")
+        metaP = read_meta(dirP)
+        check('player: test recording has two segments', okP is True and len(metaP['segments']) == 2, metaP['segments'])
+        seg_names = [x['file'] for x in metaP['segments']]
+        # The note as the recorder writes it (by hand here), rendered as reading view does. Two
+        # plugin instances are loaded, so two post-processors run: still one button.
+        page.evaluate("""(files) => {
+          const note = 'Recording 2026-09-27 14:03 (test)\\n' + files.map((f, i) => `![segment ${i + 1}, 14:03:12, 0:04](Lecture%203/audio/2026-09-27%2014-03/${f})`).join('\\n') + '\\n';
+          fs.set('Notes/Lecture 3.md', note);
+          window.playerBlock = renderMarkdown(note, 'Notes/Lecture 3.md');
+        }""", seg_names)
+        page.wait_for_timeout(500)
+        nButtons = page.evaluate("() => playerBlock.querySelectorAll('.notebook-audio-open').length")
+        check('player: one "Play as one timeline" button after the embeds', nButtons == 1, nButtons)
+        page.evaluate("() => playerBlock.querySelector('.notebook-audio-open')?.click()")
+        try:
+            page.wait_for_function("() => app.workspace.getLeavesOfType('notebook-audio-player').length === 1", timeout=3000)
+        except Exception:
+            pass
+        check('player: the button opens a player leaf', page.evaluate("() => app.workspace.getLeavesOfType('notebook-audio-player').length") == 1)
+        page.evaluate("() => { window.pv = app.workspace.getLeavesOfType('notebook-audio-player')[0]?.view; window.playerLeaf = window.pv?.leaf; }")
+        try:
+            page.wait_for_function("() => window.pv && pv.timeline", timeout=8000)
+        except Exception:
+            pass
+        tlP = page.evaluate("() => (window.pv && pv.timeline) || null")
+        print('player timeline:', json.dumps(tlP))
+        print('player: decoded durations (s)', page.evaluate("() => window.pv ? pv.audios.map(a => a.duration) : null"),
+              '| meta (startMs, audioEndMs)', [(x['startMs'], x.get('audioEndMs')) for x in metaP['segments']])
+        bar = page.evaluate("""() => {
+          const q = s => [...pv.contentEl.querySelectorAll(s)];
+          const text = s => pv.contentEl.querySelector(s)?.textContent;
+          const pad = n => String(n).padStart(2, '0');
+          const d = new Date(Date.parse(pv.meta.started));
+          return { segs: q('.notebook-audio-seg').length, gaps: q('.notebook-audio-gap').length,
+                   grows: q('.notebook-audio-bar > span').map(e => Number(e.style.flexGrow)),
+                   gap: q('.notebook-audio-gap').map(e => Number(e.style.flexGrow)),
+                   time: text('.notebook-audio-time'), clock: text('.notebook-audio-clock'), segnum: text('.notebook-audio-segnum'),
+                   expectClock: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+                   title: pv.getDisplayText(), gapTitle: pv.contentEl.querySelector('.notebook-audio-gap')?.title };
+        }""") if tlP else {}
+        print('player bar:', bar)
+        check('player: bar has 2 segments and 1 gap', bar.get('segs') == 2 and bar.get('gaps') == 1, bar)
+        ratio = (bar['gap'][0] / sum(bar['grows'])) if bar.get('gap') and sum(bar['grows']) else -1
+        check('player: gap width is proportional to the time lost',
+              tlP is not None and abs(ratio - tlP['lostMs'] / tlP['totalMs']) <= 0.05, (ratio, tlP and tlP['lostMs'] / tlP['totalMs']))
+        check('player: 1.5 to 4.5 s lost on the timeline', tlP is not None and 1500 <= tlP['lostMs'] <= 4500, tlP and tlP['lostMs'])
+
+        def mmss_py(ms):
+            sec = int(max(0, ms) // 1000)
+            return f'{sec // 60}:{sec % 60:02d}'
+        check('player: readout shows 0:00 / total, the start wall clock and segment 1 of 2',
+              tlP is not None and bar.get('time') == f"0:00 / {mmss_py(tlP['totalMs'])}" and bar.get('clock') == bar.get('expectClock')
+              and bar.get('segnum') == 'segment 1 of 2', bar)
+
+        if tlP:
+            page.evaluate("() => pv.play()")
+            page.wait_for_timeout(1500)
+            st = page.evaluate("() => ({ pos: pv.position, paused0: pv.audios[0].paused, seg: pv.currentSegment, head: pv.contentEl.querySelector('.notebook-audio-head').style.left })")
+            check('player: play() advances the position with segment 1 playing', st['pos'] > 800 and st['paused0'] is False and st['seg'] == 0, st)
+            page.evaluate("() => pv.seekTo(pv.timeline.totalMs - 400)")
+            page.wait_for_timeout(300)
+            st = page.evaluate("() => ({ seg: pv.currentSegment, pos: pv.position, playing: pv.audios.map(a => !a.paused) })")
+            check('player: seeking near the end moves to segment 2, segment 1 stops', st['seg'] == 1 and not st['playing'][0], st)
+            st = page.evaluate("""() => {
+              const gap = pv.timeline.items.find(x => x.kind === 'gap'), seg2 = pv.timeline.items.find(x => x.kind === 'segment' && x.index === 1);
+              pv.seekTo(gap.startMs + 100);
+              const note = pv.contentEl.querySelector('.notebook-audio-gap-note');
+              return { seg: pv.currentSegment, pos: pv.position, start2: seg2.startMs, note: note.classList.contains('is-visible') ? note.textContent : null };
+            }""")
+            check('player: seeking into the gap lands on segment 2 and says what was lost',
+                  st['seg'] == 1 and abs(st['pos'] - st['start2']) <= 50 and bool(st['note']) and st['note'].endswith('lost here'), st)
+            page.evaluate("() => pv.pause()")
+            check('player: pause() pauses every audio element', page.evaluate("() => pv.audios.every(a => a.paused) && !pv.isPlaying"))
+            # A click on the bar a quarter into segment 1 seeks there.
+            box = page.evaluate("() => { const r = pv.contentEl.querySelector('.notebook-audio-seg').getBoundingClientRect(); return { x: r.left + r.width / 4, y: r.top + r.height / 2 }; }")
+            page.mouse.click(box['x'], box['y'])
+            st = page.evaluate("() => ({ pos: pv.position, seg: pv.currentSegment, d0: pv.timeline.items[0].durationMs, s0: pv.timeline.items[0].startMs })")
+            check('player: a click on the bar seeks proportionally', st['seg'] == 0 and abs(st['pos'] - (st['s0'] + st['d0'] / 4)) < 0.05 * st['d0'], st)
+            # Play across the gap: from 0.7 s before the end of segment 1 into segment 2.
+            page.evaluate("() => { pv.seekTo(pv.timeline.items[0].endMs - 700); pv.play(); }")
+            page.wait_for_timeout(1800)
+            st = page.evaluate("""() => ({ seg: pv.currentSegment, pos: pv.position, start2: pv.timeline.items.find(x => x.kind === 'segment' && x.index === 1).startMs,
+                                           playing: pv.audios.map(a => !a.paused), note: pv.contentEl.querySelector('.notebook-audio-gap-note').textContent })""")
+            page.evaluate("() => pv.pause()")
+            check('player: playback skips the gap into segment 2', st['seg'] == 1 and st['pos'] > st['start2'] and st['playing'] == [False, True] and st['note'].endswith('lost here'), st)
+            page.evaluate("() => { pv.seekTo(pv.timeline.items[0].endMs * 0.6); }")
+            clip = page.evaluate("() => { const r = document.getElementById('leaf').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: 260 }; }")
+            page.screenshot(path=os.path.join(OUT, 'shot_player.png'), clip=clip)
+            page.evaluate("() => document.body.classList.add('theme-dark')")
+            page.screenshot(path=os.path.join(OUT, 'shot_player_dark.png'), clip=clip)
+            page.evaluate("() => document.body.classList.remove('theme-dark')")
+
+        # The command lists the note's recordings and reuses the open player.
+        page.evaluate("async () => { await app.workspace.getLeaf(true).openFile(app.vault.getFile('Notes/Lecture 3.md')); }")
+        page.evaluate("async () => { await commands['open-recording'].callback(); }")
+        items = page.evaluate("() => [...document.querySelectorAll('.modal .suggestion-item')].map(e => e.textContent)")
+        check('player: the command lists the recording', len(items) == 1 and 'Recording 2026-09-27 14:03' in items[0], items)
+        if items:
+            page.evaluate("() => document.querySelector('.modal .suggestion-item').click()")
+            page.wait_for_timeout(300)
+        st = page.evaluate("""() => { const l = app.workspace.activeLeaf; return { type: l && l.view && l.view.getViewType(), dir: l && l.view && l.view.dir,
+                                      same: l === window.playerLeaf, n: app.workspace.getLeavesOfType('notebook-audio-player').length }; }""")
+        check('player: choosing it activates the existing player on that recording', st == {'type': 'notebook-audio-player', 'dir': dirP, 'same': True, 'n': 1}, st)
+        check('player: the view state keeps the folder (workspace reload)', page.evaluate("() => playerLeaf.getViewState().state.dir") == dirP)
+        page.evaluate("async () => { fs.set('Notes/Empty.md', 'nothing recorded here\\n'); notices.length = 0; await app.workspace.getLeaf(true).openFile(app.vault.getFile('Notes/Empty.md')); await commands['open-recording'].callback(); }")
+        check('player: a note without recordings gets a notice', any('No recordings' in n for n in page.evaluate("() => notices")), page.evaluate("() => notices"))
+        # A missing segment file is marked in the bar and skipped: a copy of the recording without segment-01.
+        dirM = 'Notes/Lecture 3/audio/2026-09-27 14-05'
+        page.evaluate("""async ([d, m]) => { dirs.add(m); for (const f of ['meta.json', 'segment-02.m4a']) fs.set(m + '/' + f, fs.get(d + '/' + f)); await pc.player.open(m); }""", [dirP, dirM])
+        try:
+            page.wait_for_function("(m) => app.workspace.activeLeaf.view.dir === m && app.workspace.activeLeaf.view.timeline", arg=dirM, timeout=8000)
+        except Exception:
+            pass
+        page.evaluate("() => { window.pm = app.workspace.activeLeaf.view; pm.play(); }")
+        page.wait_for_timeout(700)
+        st = page.evaluate("""() => ({ n: app.workspace.getLeavesOfType('notebook-audio-player').length, missing: pm.contentEl.querySelectorAll('.notebook-audio-seg.is-missing').length,
+                                       seg: pm.currentSegment, playing: pm.audios.map(a => !a.paused), pos: pm.position, start2: pm.timeline.items.find(x => x.kind === 'segment' && x.index === 1).startMs })""")
+        page.evaluate("() => pm.pause()")
+        check('player: a missing segment file is marked and skipped', st['n'] == 2 and st['missing'] == 1 and st['seg'] == 1 and st['playing'] == [False, True] and st['pos'] > st['start2'], st)
 
         print('notices:', page.evaluate("() => notices"))
         print('page errors:', errors)
