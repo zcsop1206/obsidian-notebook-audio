@@ -1,1 +1,165 @@
 /* Notebook Audio: status pill, recovery notice and the timeline player. */
+
+/* ---- Player: one timeline across a recording's segments, gaps shown. */
+.notebook-audio-player {
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  outline: none;
+}
+.notebook-audio-player:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--background-modifier-border-focus, var(--interactive-accent));
+}
+.notebook-audio-message {
+  color: var(--text-muted);
+}
+.notebook-audio-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.notebook-audio-title {
+  font-size: var(--font-ui-large, 1.15em);
+  font-weight: var(--font-semibold, 600);
+  color: var(--text-normal);
+}
+.notebook-audio-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small, 0.9em);
+}
+.notebook-audio-note {
+  color: var(--link-color, var(--text-accent));
+  font-size: var(--font-ui-small, 0.9em);
+  align-self: flex-start;
+}
+
+/* The bar: segments and gaps, widths proportional to time (flex-grow = ms). */
+.notebook-audio-bar {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 32px;
+  padding: 4px 0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.notebook-audio-seg,
+.notebook-audio-gap {
+  flex-basis: 0;
+  flex-shrink: 1;
+  min-width: 2px;
+  border-radius: var(--radius-s, 4px);
+}
+.notebook-audio-seg {
+  background: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+.notebook-audio-seg.is-current {
+  background: var(--interactive-accent);
+}
+.notebook-audio-seg.is-missing {
+  background: repeating-linear-gradient(135deg, var(--text-error) 0 3px, transparent 3px 7px);
+  opacity: 0.7;
+}
+/* A gap stays visible however short it is. */
+.notebook-audio-gap {
+  min-width: 6px;
+  background: repeating-linear-gradient(135deg, var(--background-modifier-border) 0 3px, transparent 3px 6px);
+  border: 1px dashed var(--text-muted);
+  box-sizing: border-box;
+}
+.notebook-audio-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-normal);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.notebook-audio-gap-note {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small, 0.9em);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.notebook-audio-gap-note.is-visible {
+  opacity: 1;
+}
+
+.notebook-audio-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.notebook-audio-time {
+  color: var(--text-normal);
+}
+.notebook-audio-clock,
+.notebook-audio-segnum {
+  color: var(--text-muted);
+}
+.notebook-audio-controls {
+  display: flex;
+  gap: 8px;
+}
+.notebook-audio-controls .notebook-audio-button {
+  min-width: 40px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.notebook-audio-warning {
+  color: var(--text-error);
+  font-size: var(--font-ui-small, 0.9em);
+}
+
+/* Reading view: the button after a recording's embeds. */
+.notebook-audio-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: var(--font-ui-small, 0.9em);
+}
+.notebook-audio-open-icon {
+  display: inline-flex;
+}
+.notebook-audio-open-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.notebook-audio-suggestion-summary {
+  color: var(--text-muted);
+}
+
+/* Touch: bigger targets. */
+.is-mobile .notebook-audio-bar {
+  height: 44px;
+}
+.is-mobile .notebook-audio-controls .notebook-audio-button {
+  min-width: 52px;
+  min-height: 44px;
+}
+.is-mobile .notebook-audio-open {
+  min-height: 40px;
+}
