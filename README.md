@@ -12,7 +12,8 @@ tells you how much was lost, and plays a recording back as one timeline with the
 ## What you get
 
 - A ribbon button and a command, "Start or stop recording". A status bar item (desktop) or a small
-  floating pill (mobile) shows the elapsed time, size, segment count and any pause.
+  floating pill (mobile) shows the elapsed time, size, segment count and any pause; a tap on it
+  stops.
 - Clips saved next to the note that was active when recording started:
   `<note folder>/<note basename>/audio/<YYYY-MM-DD HH-mm>/segment-01.m4a`, `segment-02.m4a`, …
   and a `meta.json` with each segment's start time, so audio can be lined up with wall-clock time
@@ -21,7 +22,10 @@ tells you how much was lost, and plays a recording back as one timeline with the
 - Audio is written as it arrives (appended live on Obsidian 1.12.3 and later), so a force quit
   loses at most a couple of seconds; an interrupted recording is recovered on the next launch.
 - A player that plays a recording's segments in order, shows where audio was lost, and shows the
-  wall-clock time of the current position.
+  wall-clock time of the current position. Open it with the command "Open a recording of this
+  note", or with the "Play as one timeline" button under a recording's embeds in reading view.
+- Settings: bitrate (96 kbps), the folder for recordings made without a note (`audio/`), a
+  per-recording log, and the preferred format (automatic: AAC in `.m4a` where available).
 
 Out of scope: background recording (impossible in the web view), transcription, syncing audio to
 ink strokes, noise processing.
